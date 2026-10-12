@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HO kalendář</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#b3404a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="HO">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<style>
+  :root { --bg:#b3404a; --fg:#fff; --dim:rgba(255,255,255,.4); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .app { max-width:480px; margin:0 auto; padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+  header { display:flex; align-items:center; justify-content:space-between; padding:20px 4px 12px; }
+  header h1 { margin:0; font-size:18px; font-weight:600; }
+  .nav button { background:none; border:0; color:var(--dim); font-size:18px; padding:8px 12px; cursor:pointer; }
+  .nav button:active { color:var(--fg); }
+  .grid { display:grid; grid-template-columns:repeat(7,1fr); text-align:center; }
+  .dow { font-weight:700; font-size:14px; padding:14px 0 10px; }
+  .day { aspect-ratio:1; display:flex; align-items:center; justify-content:center; }
+  .day span { width:78%; aspect-ratio:1; display:flex; align-items:center; justify-content:center;
+    border-radius:50%; font-size:17px; border:3px solid transparent; }
+  .day.other span { color:var(--dim); }
+  .day.today span { background:rgba(255,255,255,.18); font-weight:700; }
+  .day.ho span { border-color:var(--fg); }
+  .msg { text-align:center; font-size:13px; min-height:20px; margin-top:12px; color:var(--dim); }
+  .tools { text-align:center; margin-top:24px; }
+  .tools button { background:none; border:0; color:var(--dim); font-size:13px; padding:8px; cursor:pointer; }
+  form { padding:40px 4px; }
+  form h2 { margin-top:0; }
+  form p { font-size:14px; opacity:.85; }
+  input { width:100%; padding:12px; margin:6px 0 14px; border-radius:8px; border:0; font-size:16px; }
+  form button { width:100%; padding:14px; border-radius:8px; border:0; font-size:16px; font-weight:600;
+    background:#fff; color:var(--bg); cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+
+<script>
+const CFG_KEY = 'ho_cfg';
+const CACHE_KEY = 'ho_cache';
+const MESICE = ['leden','únor','březen','duben','květen','červen','červenec','srpen','září','říjen','listopad','prosinec'];
+const DNY = ['po','út','st','čt','pá','so','ne'];
+
+const app = document.getElementById('app');
+let cfg = load(CFG_KEY);
+let ho = new Set((load(CACHE_KEY) || []));
+let view = new Date(); view.setDate(1);
+let msg = '';
+
+function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+const pad = n => String(n).padStart(2, '0');
+const key = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+function renderSetup() {
+  app.innerHTML = `
+    <form id="f">
+      <h2>Nastavení</h2>
+      <p>Vlož adresu webové aplikace z Google Apps Scriptu a své heslo (token). Uloží se jen v tomto telefonu.</p>
+      <input id="url" type="url" placeholder="https://script.google.com/macros/s/.../exec" required>
+      <input id="tok" type="password" placeholder="Heslo (token)" required>
+      <button type="submit">Uložit</button>
+    </form>`;
+  document.getElementById('f').onsubmit = e => {
+    e.preventDefault();
+    cfg = { url: document.getElementById('url').value.trim(), token: document.getElementById('tok').value.trim() };
+    save(CFG_KEY, cfg);
+    start();
+  };
+}
+
+function render() {
+  const y = view.getFullYear(), m = view.getMonth();
+  const first = new Date(y, m, 1);
+  const offset = (first.getDay() + 6) % 7; // pondělí = 0
+  const start = new Date(y, m, 1 - offset);
+  const todayKey = key(new Date());
+
+  let cells = DNY.map(d => `<div class="dow">${d}</div>`).join('');
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    if (i >= 35 && d.getMonth() !== m) break; // šestý řádek jen když je potřeba
+    const k = key(d);
+    const cls = ['day',
+      d.getMonth() !== m ? 'other' : '',
+      k === todayKey ? 'today' : '',
+      ho.has(k) ? 'ho' : ''].join(' ');
+    cells += `<div class="${cls}"><span>${d.getDate()}</span></div>`;
+  }
+
+  app.innerHTML = `
+    <header>
+      <h1>${MESICE[m]} ${y}</h1>
+      <div class="nav">
+        <button id="prev" aria-label="Předchozí měsíc">▲</button>
+        <button id="next" aria-label="Další měsíc">▼</button>
+      </div>
+    </header>
+    <div class="grid">${cells}</div>
+    <div class="msg">${msg}</div>
+    <div class="tools"><button id="reset">Změnit nastavení</button></div>`;
+
+  document.getElementById('prev').onclick = () => shift(-1);
+  document.getElementById('next').onclick = () => shift(1);
+  document.getElementById('reset').onclick = () => {
+    if (confirm('Smazat uloženou adresu a heslo?')) {
+      localStorage.removeItem(CFG_KEY); localStorage.removeItem(CACHE_KEY);
+      cfg = null; ho = new Set(); renderSetup();
+    }
+  };
+}
+
+function shift(n) { view = new Date(view.getFullYear(), view.getMonth() + n, 1); render(); }
+
+async function refresh() {
+  msg = 'Načítám…'; render();
+  try {
+    const r = await fetch(cfg.url + (cfg.url.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(cfg.token));
+    const data = await r.json();
+    if (!Array.isArray(data)) throw new Error('Špatné heslo nebo adresa');
+    ho = new Set(data);
+    save(CACHE_KEY, data);
+    msg = '';
+  } catch (e) {
+    msg = ho.size ? 'Offline, zobrazena poslední uložená data' : 'Chyba načtení: ' + e.message;
+  }
+  render();
+}
+
+function start() { if (!cfg) return renderSetup(); render(); refresh(); }
+
+// swipe doleva/doprava = měsíc dopředu/dozadu
+let x0 = null;
+document.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true });
+document.addEventListener('touchend', e => {
+  if (x0 === null || !cfg) return;
+  const dx = e.changedTouches[0].clientX - x0;
+  if (Math.abs(dx) > 60) shift(dx < 0 ? 1 : -1);
+  x0 = null;
+}, { passive: true });
+
+document.addEventListener('visibilitychange', () => { if (!document.hidden && cfg) refresh(); });
+
+start();
+</script>
+</body>
+</html>
